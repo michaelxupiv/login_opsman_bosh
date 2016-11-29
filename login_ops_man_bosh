@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+function get_uaac_auth_token {
+  uaac target $environment/uaa --skip-ssl-validation >/dev/null
+  if [ $? != 0 ]; then
+    echo "ERROR: Failed getting UAAC auth token"
+    exit 1
+  fi
+  uaac token owner get opsman pivotalcf -s "" -p $password >/dev/null
+  token=$(uaac context | grep 'access_token:' | sed 's/^.*: //')
+}
+
+function get_bosh_ip {
+  bosh_ip=$(curl -s -k $environment/api/v0/deployed/director/manifest -H "Authorization: bearer $token" | jq -r ".jobs[0].networks[0].static_ips[0]")
+  if [ $bosh_ip == null ]; then
+    echo "ERROR: Failed getting BOSH IP"
+    exit 1
+  fi
+}
+
+function get_ca_cert {
+  curl -s -k $environment/api/v0/security/root_ca_certificate | jq -r ".root_ca_certificate_pem" > /tmp/ops_man_ca_cert
+}
+
+function get_director_credentials {
+  director_identity=$(curl -s -k $environment/api/v0/deployed/director/credentials/director_credentials -H "Authorization: bearer $token" | jq -r ".credential.value.identity")
+  director_password=$(curl -s -k $environment/api/v0/deployed/director/credentials/director_credentials -H "Authorization: bearer $token" | jq -r ".credential.value.password")
+  if [ $director_identity == null ] || [ $director_password == null ]; then
+    echo "ERROR: Failed getting director credentials"
+    exit 1
+  fi
+}
+
+function get_manifest {
+  curl -s -k $environment/api/v0/deployed/director/manifest -H "Authorization: bearer $token" -o /tmp/ops_man_manifest.yml
+}
+
+function bosh_target_and_login {
+  bosh --ca-cert /tmp/ops_man_ca_cert target $bosh_ip
+}
+
+function main {
+  echo "PCF Environment URL: "
+  read environment
+  echo "OpsManager password: "
+  read -s password
+  get_uaac_auth_token
+  get_bosh_ip
+  get_ca_cert
+  get_director_credentials
+  get_manifest
+  echo "BOSH_USER: " $director_identity
+  echo "BOSH_PASSWORD: " $director_password
+  bosh_target_and_login
+}
+
+main
